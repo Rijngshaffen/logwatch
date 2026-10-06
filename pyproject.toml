@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linux-logwatch"
+version = "1.0.0"
+description = "A PyQt6 Linux log monitor with explainable statistical anomaly detection"
+requires-python = ">=3.10"
+dependencies = ["PyQt6>=6.6,<7"]
+
+[project.scripts]
+logwatch = "logwatch.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["logwatch*"]

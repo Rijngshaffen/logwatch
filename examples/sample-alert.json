@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "alert_id": "b314ae53-a89b-484a-8244-ad2ce9318cf0",
+  "timestamp": "2026-10-06T13:13:33.801+00:00",
+  "host": "example-host",
+  "category": "log_anomaly",
+  "severity": "critical",
+  "score": 95,
+  "detector": "adaptive-statistical-v1",
+  "reasons": [
+    {
+      "type": "resource_exhaustion",
+      "description": "Matched a known system failure pattern"
+    }
+  ],
+  "event": {
+    "timestamp": "Oct  6 12:01:03",
+    "source": "demo",
+    "service": "kernel",
+    "message": "Out of memory: oom-killer terminated process 812",
+    "level": "info",
+    "raw": "Oct  6 12:01:03 example-host kernel: Out of memory: oom-killer terminated process 812"
+  },
+  "baseline": {
+    "events": 1,
+    "alerts": 1,
+    "suppressed": 0,
+    "templates": 1,
+    "ready": false,
+    "warmup_events": 100,
+    "baseline_windows": 0
+  }
+}
