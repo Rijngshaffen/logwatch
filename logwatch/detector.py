@@ -32,7 +32,7 @@ class DetectorConfig:
 
 
 RULES = [
-    ("kernel_failure", 98, re.compile(r"(?:\b(kernel panic|segfault|segmentation fault)\b|\bBUG:)", re.I)),
+    ("kernel_failure", 98, re.compile(r"(?:\b(kernel panic|segfault|segmentation fault)\b|(?-i:\bBUG:))", re.I)),
     ("resource_exhaustion", 95, re.compile(r"\b(out of memory|oom[- ]killer|no space left on device|disk full)\b", re.I)),
     ("storage_failure", 92, re.compile(r"\b(I/O error|filesystem corruption|read-only file system)\b", re.I)),
     ("authentication_failure", 70, re.compile(r"\b(failed password|authentication failure|invalid user|permission denied)\b", re.I)),

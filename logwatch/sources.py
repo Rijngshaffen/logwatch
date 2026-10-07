@@ -34,21 +34,36 @@ class LineFramer:
         return result
 
 
+def open_regular(path: Path):
+    """Open without blocking on FIFOs or devices; return None unless it is a regular file."""
+    stream = os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK), "rb")
+    if stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+        return stream
+    stream.close()
+    return None
+
+
+def tail_anchor(stream) -> tuple[bytes, int]:
+    offset = max(0, stream.tell() - 64)
+    return os.pread(stream.fileno(), stream.tell() - offset, offset), offset
+
+
 def follow_file(path: str, stop: threading.Event, from_start: bool = False,
                 status: Callable[[str], None] = lambda _: None) -> Iterator[str | None]:
     path_obj = Path(path).expanduser()
     if not path_obj.is_file():
         raise ValueError("Select an existing regular log file")
-    descriptor = os.open(path_obj, os.O_RDONLY | os.O_NONBLOCK)
-    stream = os.fdopen(descriptor, "rb")
+    stream = open_regular(path_obj)
+    if stream is None:
+        raise ValueError("Select a regular log file")
     try:
-        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-            raise ValueError("Select a regular log file")
-        if not from_start:
-            stream.seek(0, os.SEEK_END)
-        framer = LineFramer()
         anchor = b""
         anchor_offset = 0
+        if not from_start:
+            stream.seek(0, os.SEEK_END)
+            # Anchor existing content so truncation is noticed before the first new line.
+            anchor, anchor_offset = tail_anchor(stream)
+        framer = LineFramer()
         missing = False
         while not stop.is_set():
             # Copy-truncate can regrow past the old position between polls.
@@ -61,31 +76,38 @@ def follow_file(path: str, stop: threading.Event, from_start: bool = False,
                 status("Log file truncated; following from its new beginning")
             chunk = stream.read(65536)
             if chunk:
-                anchor_offset = max(0, stream.tell() - 64)
-                anchor = os.pread(stream.fileno(), min(64, stream.tell()), anchor_offset)
+                anchor, anchor_offset = tail_anchor(stream)
                 for line in framer.feed(chunk):
                     if stop.is_set():
                         return
                     if line:
                         yield line
                 continue
+            available = True
             try:
                 current = path_obj.stat()
                 opened = os.fstat(stream.fileno())
                 if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
-                    replacement = path_obj.open("rb")
-                    stream.close()
-                    stream = replacement
-                    framer, anchor = LineFramer(), b""
-                    status("Log file rotated; following the replacement file")
-                    continue
-                if missing:
-                    missing = False
-                    status("Log path available again")
+                    replacement = open_regular(path_obj)
+                    if replacement is not None:
+                        stream.close()
+                        stream = replacement
+                        framer, anchor = LineFramer(), b""
+                        if missing:
+                            missing = False
+                            status("Log path available again")
+                        status("Log file rotated; following the replacement file")
+                        continue
+                    # A FIFO, directory, or device at the path is not followed.
+                    available = False
             except FileNotFoundError:
-                if not missing:
-                    status("Log path temporarily missing; waiting for rotation to finish")
-                    missing = True
+                available = False
+            if available and missing:
+                missing = False
+                status("Log path available again")
+            elif not available and not missing:
+                status("Log path temporarily missing; waiting for rotation to finish")
+                missing = True
             yield None
             stop.wait(0.1)
     finally:

@@ -25,7 +25,11 @@ class LogEvent:
 
 
 SYSLOG = re.compile(r"^(?:<\d+>)?(?P<stamp>[A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d|\d{4}-\d\d-\d\dT\S+)\s+\S+\s+(?P<service>[\w./@-]+)(?:\[\d+\])?:\s*(?P<msg>.*)$")
-ERROR = re.compile(r"\b(error|err|failed|failure|fatal|panic|critical|segfault|segmentation fault|denied)\b", re.I)
+ERROR = re.compile(r"\b(errors?|err|failed|failures?|fatal|panic|critical|segfault|segmentation fault|denied)\b", re.I)
+# Zero counters and negations ("failed=0", "0 errors", "no failures") are not error evidence.
+BENIGN = re.compile(r"\b(?:0|no|zero)\s+(?:errors?|failures?|failed)\b"
+                    r"|\b(?:errors|errs|failures|failed)\s*[=:]\s*0\b(?![.\d])"
+                    r"|\b(?:error|err|failure)=0\b(?![.\d])", re.I)
 CRITICAL = re.compile(r"\b(fatal|panic|critical)\b", re.I)
 WARN = re.compile(r"\b(warn(?:ing)?|timeout|timed out|retry)\b", re.I)
 PRIORITIES = {0: "critical", 1: "critical", 2: "critical", 3: "error", 4: "warning", 5: "info", 6: "info", 7: "debug"}
@@ -72,5 +76,6 @@ def parse_line(line: str, source: str) -> LogEvent:
             # Traditional syslog lacks year/timezone; retain its original timestamp.
             timestamp, service, message = match["stamp"], match["service"], match["msg"]
     if level not in {"critical", "error", "warning", "info", "debug"}:
-        level = "critical" if CRITICAL.search(message) else "error" if ERROR.search(message) else "warning" if WARN.search(message) else "info"
+        text = BENIGN.sub(" ", message)
+        level = "critical" if CRITICAL.search(text) else "error" if ERROR.search(text) else "warning" if WARN.search(text) else "info"
     return LogEvent(timestamp, source, service, message, level, raw)

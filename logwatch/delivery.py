@@ -1,6 +1,7 @@
 """Local JSONL persistence plus bounded asynchronous HTTP delivery."""
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -115,7 +116,7 @@ class AlertSender(threading.Thread):
                 with self.lock:
                     self.delivered += 1
                 return
-            except (OSError, ValueError, urllib.error.URLError) as exc:
+            except (OSError, ValueError, http.client.HTTPException) as exc:
                 retry = not isinstance(exc, urllib.error.HTTPError) or exc.code in {408, 429} or exc.code >= 500
                 if isinstance(exc, urllib.error.HTTPError):
                     exc.close()

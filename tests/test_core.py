@@ -45,6 +45,12 @@ class ParserTests(unittest.TestCase):
         parsed = parse_line(frame.feed(b"x" * 70000 + b"\n")[0], "file")
         self.assertIn("record truncated", parsed.message)
 
+    def test_keyword_levels_ignore_zero_counts_and_negations(self):
+        for text in ("backup done failed=0 ok=12", "scan finished with 0 errors", "no failures detected", "errors: 0"):
+            self.assertEqual(parse_line(text, "file").level, "info", text)
+        for text in ("3 errors occurred", "10 failed", "failed=2", "error: 0 bytes read", "no route: connection failed"):
+            self.assertEqual(parse_line(text, "file").level, "error", text)
+
     def test_line_framer_partial_utf8_and_limits(self):
         frame = LineFramer(limit=8)
         self.assertEqual(frame.feed(b"a\xc3"), [])
@@ -74,6 +80,8 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(alert["severity"], "critical")
         self.assertEqual(alert["reasons"][0]["type"], "resource_exhaustion")
         json.dumps(alert, allow_nan=False)
+        self.assertEqual(Detector(now=0).process(event("BUG: unable to handle page fault"), now=0)[0]["score"], 98)
+        self.assertEqual(Detector(now=0).process(event("bug: tracker synced"), now=0), [])
         strict = Detector(DetectorConfig(threshold=96), now=0)
         self.assertEqual(strict.process(event("Out of memory"), now=0), [])
 
@@ -141,6 +149,27 @@ class SourceTests(unittest.TestCase):
             fifo = path.parent / "pipe"
             os.mkfifo(fifo)
             self.assertRaises(ValueError, next, follow_file(str(fifo), threading.Event()))
+
+    def test_rotation_to_fifo_waits_and_idle_truncation_is_detected(self):
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "app.log"
+            path.write_bytes(b"existing content\n")
+            statuses = []
+            stream = follow_file(str(path), threading.Event(), status=statuses.append)
+            self.assertIsNone(next(stream))
+            # Copy-truncate regrowing past the old offset before any new line was read.
+            path.write_text("replaced and longer content\n")
+            self.assertEqual(next(stream), "replaced and longer content")
+            self.assertIsNone(next(stream))
+            path.unlink()
+            os.mkfifo(path)
+            self.assertIsNone(next(stream))  # Must not block opening the FIFO.
+            self.assertTrue(any("missing" in s for s in statuses))
+            path.unlink()
+            path.write_text("regular again\n")
+            self.assertEqual(next(stream), "regular again")
+            stream.close()
 
 
 class Receiver(BaseHTTPRequestHandler):
@@ -219,6 +248,25 @@ class DeliveryTests(unittest.TestCase):
         self.send_one()
         self.assertEqual(len(Receiver.requests), 1)
         self.assertEqual(self.sender.snapshot()["failed"], 1)
+
+    def test_malformed_response_fails_without_stopping_sender(self):
+        import socket
+        listener = socket.create_server(("127.0.0.1", 0))
+        def garbage():
+            for _ in range(3):
+                connection, _address = listener.accept()
+                connection.recv(65536)
+                connection.sendall(b"not http\r\n\r\n")
+                connection.close()
+        thread = threading.Thread(target=garbage, daemon=True)
+        thread.start()
+        self.make_sender(f"http://127.0.0.1:{listener.getsockname()[1]}/alerts")
+        self.send_one()
+        thread.join(timeout=5)
+        listener.close()
+        self.assertEqual(self.sender.snapshot()["failed"], 1)
+        self.assertTrue(self.sender.is_alive())
+        self.assertIn("BadStatusLine", self.messages[0])
 
     def test_queue_saturation_retains_local_alert(self):
         self.sender = AlertSender(DeliveryConfig(self.output, self.endpoint), lambda _: None)
